@@ -1,0 +1,257 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <ESP_Mail_Client.h>
+#include <HTTPClient.h>
+
+#define WIFI_SSID "Daisy"
+#define WIFI_PASSWORD "Hudson Hornet51"
+
+#define SMTP_HOST "smtp.gmail.com"
+#define SMTP_PORT esp_mail_smtp_port_587 
+
+#define AUTHOR_EMAIL "dragontamer2702@gmail.com"
+#define AUTHOR_PASSWORD "xeactjnavocdabqf"
+
+#define RECIPIENT_EMAIL "yashwanth2702@gmail.com"
+
+#define PANIC_BUTTON_PIN 21
+
+String esp_cam_ip;
+String voice_command;
+
+SMTPSession smtp;
+
+Session_Config config;
+
+const char* serverUrl="http://13.200.72.158:8081/~/in-cse/in-name/AE-EMS/Node-1/Command";
+
+void smtpCallback(SMTP_Status status);
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(PANIC_BUTTON_PIN, INPUT_PULLUP); 
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(300);
+  }
+
+  MailClient.networkReconnect(true);
+  smtp.debug(1);
+  smtp.callback(smtpCallback);
+
+
+  config.server.host_name = SMTP_HOST;
+  config.server.port = SMTP_PORT;
+  config.login.email = AUTHOR_EMAIL;
+  config.login.password = AUTHOR_PASSWORD;
+
+  config.login.user_domain = WiFi.localIP().toString(); // Set user_domain to ESP32's IP address
+
+  config.time.ntp_server = F("pool.ntp.org,time.nist.gov");
+  config.time.gmt_offset = 3;
+  config.time.day_light_offset = 0;
+
+  if (!smtp.connect(&config)) {
+    Serial.println("Connection error!");
+    return;
+  }
+
+  Serial.print("Connected with IP: ");
+  Serial.println(WiFi.localIP());
+
+  retrive_ip();
+
+  Serial.println("Setup completed...");
+}
+
+void loop() {
+  if (digitalRead(PANIC_BUTTON_PIN) == LOW) { // Check if the panic button is pressed
+    sendPanicEmail(); // Send panic email
+    delay(1000); // Debounce delay
+  }
+  if (voice_command=="help"){
+    // send extra command so that it wont run in a loop for a single help command
+    sendHttpPostRequest("command_help_email_sent");
+
+    sendPanicEmail();
+    delay(1000);
+  }
+}
+
+void sendPanicEmail() {
+  // Compose email message
+  String textMsg = "Dear Client,\n\nWe've detected a panic situation at your home. Please access the live video feed immediately:\n";
+  textMsg += "http://" + esp_cam_ip + "\n\n"; // Inserting the IP address here
+  textMsg += "Take necessary actions immediately.\n\n";
+  textMsg += "Best,\nElderly Monitoring System\n";
+
+  SMTP_Message message;
+
+  message.sender.name = F("Elderly monitoring system");
+  message.sender.email = AUTHOR_EMAIL;
+  message.subject = "Urgent: Panic Alert!";
+  message.addRecipient(F("Client"), RECIPIENT_EMAIL);
+  message.text.content = textMsg;
+  message.text.transfer_encoding = "base64";
+  message.text.charSet = F("utf-8");
+  message.priority = esp_mail_smtp_priority::esp_mail_smtp_priority_high;
+  message.addHeader(F("Message-ID: <onem2m-platform>"));
+
+  if (!smtp.connect(&config))
+  {
+    MailClient.printf("Connection error, Status Code: %d, Error Code: %d, Reason: %s\n", smtp.statusCode(), smtp.errorCode(), smtp.errorReason().c_str());
+    return;
+  }
+  if (!smtp.isLoggedIn())
+  {
+    Serial.println("Not yet logged in.");
+  }
+  else
+  {
+    if (smtp.isAuthenticated())
+      Serial.println("Successfully logged in.");
+    else
+      Serial.println("Connected with no Auth.");
+  }
+
+  if (!MailClient.sendMail(&smtp, &message)) {
+    Serial.println("Error sending panic email!");
+    MailClient.printf("Error, Status Code: %d, Error Code: %d, Reason: %s\n", smtp.statusCode(), smtp.errorCode(), smtp.errorReason().c_str());
+  } else {
+    Serial.println("Panic email sent successfully!");
+  }
+}
+
+void smtpCallback(SMTP_Status status)
+{
+  /* Print the current status */
+  Serial.println(status.info());
+
+  /* Print the sending result */
+  if (status.success())
+  {
+    // MailClient.printf used in the examples is for format printing via debug Serial port
+    // that works for all supported Arduino platform SDKs e.g. SAMD, ESP32 and ESP8266.
+    // In ESP8266 and ESP32, you can use Serial.printf directly.
+
+    Serial.println("----------------");
+    MailClient.printf("Message sent success: %d\n", status.completedCount());
+    MailClient.printf("Message sent failed: %d\n", status.failedCount());
+    Serial.println("----------------\n");
+
+    for (size_t i = 0; i < smtp.sendingResult.size(); i++)
+    {
+      /* Get the result item */
+      SMTP_Result result = smtp.sendingResult.getItem(i);
+
+      // In case, ESP32, ESP8266 and SAMD device, the timestamp get from result.timestamp should be valid if
+      // your device time was synched with NTP server.
+      // Other devices may show invalid timestamp as the device time was not set i.e. it will show Jan 1, 1970.
+      // You can call smtp.setSystemTime(xxx) to set device time manually. Where xxx is timestamp (seconds since Jan 1, 1970)
+
+      MailClient.printf("Message No: %d\n", i + 1);
+      MailClient.printf("Status: %s\n", result.completed ? "success" : "failed");
+      MailClient.printf("Date/Time: %s\n", MailClient.Time.getDateTimeString(result.timestamp, "%B %d, %Y %H:%M:%S").c_str());
+      MailClient.printf("Recipient: %s\n", result.recipients.c_str());
+      MailClient.printf("Subject: %s\n", result.subject.c_str());
+    }
+    Serial.println("----------------\n");
+
+    // You need to clear sending result as the memory usage will grow up.
+    smtp.sendingResult.clear();
+  }
+}
+
+void retrive_ip(){
+  HTTPClient http;
+
+  // Set the content type header
+  http.addHeader("Content-Type", "application/json");
+
+  // Replace the URL with the provided one
+  String url = "http://admin:admin@13.200.72.158:8081/~/in-cse/in-name/AE-EMS/Node-1/Data/la";
+
+  // Start HTTP request
+  http.begin(url);
+
+  // Send GET request
+  int httpResponseCode = http.GET();
+
+  if (httpResponseCode > 0) {
+    String payload = http.getString();
+
+    Serial.println(payload);
+    String con_value=(payload.substring(payload.length()-18-14,payload.length()-18));
+    Serial.println("esp32 cam ip address: " + con_value);
+    esp_cam_ip=con_value;
+  } else {
+    Serial.println("Error getting data from URL. HTTP Response Code: " + String(httpResponseCode));
+  }
+
+  // End HTTP request
+  http.end();
+}
+
+void retrive_voice_command(){
+  HTTPClient http;
+
+  // Set the content type header
+  http.addHeader("Content-Type", "application/json");
+
+  // Replace the URL with the provided one
+  String url = "http://admin:admin@13.200.72.158:8081/~/in-cse/in-name/AE-EMS/Node-1/Command/la";
+
+  // Start HTTP request
+  http.begin(url);
+
+  // Send GET request
+  int httpResponseCode = http.GET();
+
+  if (httpResponseCode > 0) {
+    String payload = http.getString();
+
+    Serial.println(payload);
+    String con_value=(payload.substring(payload.length()-18-4,payload.length()-18));
+    Serial.println("-------------------------------------------------------------------------------------------------------");
+    Serial.println("voice command: " + con_value);
+    Serial.println("-------------------------------------------------------------------------------------------------------");
+    voice_command=con_value;
+  } else {
+    Serial.println("Error getting data from URL. HTTP Response Code: " + String(httpResponseCode));
+  }
+
+  // End HTTP request
+  http.end();
+}
+
+void sendHttpPostRequest(String conValue) {
+    HTTPClient http;
+    http.begin(serverUrl);
+    http.addHeader("Content-Type", "application/json;ty=4");
+    http.addHeader("X-M2M-Origin", "admin:admin");
+    String payload = "{\n";
+    payload += "    \"m2m:cin\":{\n";
+    payload += "        \"lbl\":[\n";
+    payload += "            \"Node-1\"\n";
+    payload += "        ],\n";
+    payload += "        \"con\":\"" + String(conValue) + "\"\n";
+    payload += "    }\n";
+    payload += "}\n";
+    int httpResponseCode = http.POST(payload);
+    String response = "";
+    if (httpResponseCode > 0) {
+        response = http.getString();
+        Serial.printf("HTTP Response Code: %d\n", httpResponseCode);
+        Serial.println("Response:");
+        Serial.println(response);
+    } else {
+        Serial.printf("POST request failed with code %d\n", httpResponseCode);
+    }
+    http.end();
+    Serial.println(response);
+}
