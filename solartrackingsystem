@@ -1,0 +1,50 @@
+#include <Servo.h>
+
+#define TRIGGER_PIN  11 // Arduino pin tied to trigger pin on the ultrasonic sensor.
+#define ECHO_PIN     12 // Arduino pin tied to echo pin on the ultrasonic sensor.
+#define SERVO_PIN    9 // Arduino pin tied to the servo motor.
+
+#define DISTANCE_THRESHOLD 20 // Threshold distance in centimeters to trigger servo movement.
+
+Servo servoMotor;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(TRIGGER_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  servoMotor.attach(SERVO_PIN);
+  servoMotor.write(0); // Initialize servo position (closed gate).
+}
+
+void loop() {
+  long duration, distance;
+  
+  // Send pulse to trigger the sensor.
+  digitalWrite(TRIGGER_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIGGER_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIGGER_PIN, LOW);
+  
+  
+  // Measure the time it takes for the pulse to travel back.
+  duration = pulseIn(ECHO_PIN, HIGH);
+  
+  // Calculate distance in centimeters.
+  distance = duration * 0.034 / 2;
+  
+  Serial.print("Distance: ");
+  Serial.println(distance);
+  
+  // If an object is detected within the threshold distance, open the gate.
+  if (distance <= DISTANCE_THRESHOLD) {
+    openGate();
+  }
+}
+
+void openGate() {
+  // Rotate servo to open the gate.
+  servoMotor.write(90); // Adjust this value as needed based on your servo.
+  delay(1000); // Adjust the delay as needed based on the gate's opening speed.
+}
