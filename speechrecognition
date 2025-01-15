@@ -1,0 +1,45 @@
+import requests
+import speech_recognition as sr
+
+def recognize_command():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("Listening for commands...")
+        recognizer.adjust_for_ambient_noise(source)  # Adjust for noise
+        audio = recognizer.listen(source)
+
+    try:
+        command = recognizer.recognize_google(audio).lower()
+        print("Command:", command)
+        return command
+    except sr.UnknownValueError:
+        print("Could not understand audio")
+    except sr.RequestError as e:
+        print("Error with Google Speech Recognition service; {0}".format(e))
+    return None
+
+def send_voice_command_to_onem2m(voice_command):
+    url = "http://13.200.72.158:8081/~/in-cse/in-name/AE-EMS/Node-1/Command/"
+    headers = {
+        "Content-Type": "application/json;ty=4",
+        "X-M2M-Origin": "admin:admin"
+    }
+    payload = {
+        "m2m:cin": {
+            "lbl": ["Node-1"],
+            "con": voice_command
+        }
+    }
+    response = requests.post(url, json=payload, headers=headers)
+
+    if response.status_code == 201:
+        print("Voice command sent successfully to OneM2M.")
+    else:
+        print(f"Failed to send voice command to OneM2M. Status code: {response.status_code}")
+
+
+if _name_ == "_main_":
+    while True:
+        command = recognize_command()
+        if command:
+            send_voice_command_to_onem2m(command)
