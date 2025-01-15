@@ -1,0 +1,144 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
+#define MAX_CMD_LEN 1024
+#define MAX_ARG_COUNT 100
+
+// Function to execute a command
+void execute_command(char *cmd) {
+    char *args[MAX_ARG_COUNT];
+    int arg_count = 0;
+    char *token = strtok(cmd, " ");
+
+    // Tokenizing the command into arguments
+    while (token != NULL) {
+        args[arg_count++] = token;
+        token = strtok(NULL, " ");
+    }
+    args[arg_count] = NULL;
+
+    if (arg_count == 0) return;
+
+    // Handle custom commands
+    if (strcmp(args[0], "exit") == 0) {
+        printf("Exiting custom shell...\n");
+        exit(0);
+    } else if (strcmp(args[0], "hello") == 0) {
+        // Custom 'hello' command
+        printf("Hello, User! Welcome to the custom shell.\n");
+        return;
+    } else if (strcmp(args[0], "greet") == 0) {
+        // Custom 'greet' command
+        if (arg_count > 1) {
+            printf("Hello, %s! How are you?\n", args[1]);
+        } else {
+            printf("Hello! Please provide a name to greet.\n");
+        }
+        return;
+    }
+
+    // Fork and execute system commands
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process
+        execvp(args[0], args);
+        perror("Command execution failed");
+        exit(1);
+    } else if (pid > 0) {
+        // Parent process
+        wait(NULL);
+    } else {
+        perror("Fork failed");
+    }
+}
+
+// Function to handle input redirection
+void redirect_input(char *cmd) {
+    char *token = strtok(cmd, "<");
+    char *command = token;
+    token = strtok(NULL, "<");
+    char *filename = token ? strtok(token, " ") : NULL;
+
+    if (!filename) {
+        printf("Error: Input file not specified.\n");
+        return;
+    }
+
+    int fd = open(filename, O_RDONLY);
+    if (fd < 0) {
+        perror("Failed to open file");
+        return;
+    }
+
+    dup2(fd, STDIN_FILENO);
+    close(fd);
+
+    execute_command(command);
+}
+
+// Function to handle output redirection
+void redirect_output(char *cmd) {
+    char *token = strtok(cmd, ">");
+    char *command = token;
+    token = strtok(NULL, ">");
+    char *filename = token ? strtok(token, " ") : NULL;
+
+    if (!filename) {
+        printf("Error: Output file not specified.\n");
+        return;
+    }
+
+    int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        perror("Failed to open file");
+        return;
+    }
+
+    dup2(fd, STDOUT_FILENO);
+    close(fd);
+
+    execute_command(command);
+}
+
+// Function to parse and execute commands
+void parse_and_execute(char *cmd) {
+    if (strchr(cmd, '<')) {
+        redirect_input(cmd);
+    } else if (strchr(cmd, '>')) {
+        redirect_output(cmd);
+    } else {
+        execute_command(cmd);
+    }
+}
+
+
+// Main function
+int main() {
+    char cmd[MAX_CMD_LEN];
+
+    printf("Welcome to the Custom Shell! Type 'exit' to quit.\n");
+
+    while (1) {
+        printf("custom-shell> ");
+        fflush(stdout);
+
+        // Reading command input
+        if (!fgets(cmd, MAX_CMD_LEN, stdin)) {
+            break;
+        }
+
+        // Removing trailing newline character
+        cmd[strcspn(cmd, "\n")] = 0;
+
+        if (strlen(cmd) > 0) {
+            parse_and_execute(cmd);
+        }
+    }
+
+    return 0;
+}
